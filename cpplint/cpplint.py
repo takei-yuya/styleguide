@@ -516,6 +516,7 @@ _CPP_SYS_HEADER = 2
 _LIKELY_MY_HEADER = 3
 _POSSIBLE_MY_HEADER = 4
 _OTHER_HEADER = 5
+_CONFIG_HEADER = 6
 
 # These constants define the current inline assembly state
 _NO_ASM = 0       # Outside of inline assembly block
@@ -704,9 +705,10 @@ class _IncludeState(object):
   # needs to move backwards, CheckNextIncludeOrder will raise an error.
   _INITIAL_SECTION = 0
   _MY_H_SECTION = 1
-  _C_SECTION = 2
-  _CPP_SECTION = 3
-  _OTHER_H_SECTION = 4
+  _CONFIG_H_SECTION = 2
+  _C_SECTION = 3
+  _CPP_SECTION = 4
+  _OTHER_H_SECTION = 5
 
   _TYPE_NAMES = {
       _C_SYS_HEADER: 'C system header',
@@ -714,6 +716,7 @@ class _IncludeState(object):
       _LIKELY_MY_HEADER: 'header this file implements',
       _POSSIBLE_MY_HEADER: 'header this file may implement',
       _OTHER_HEADER: 'other header',
+      _CONFIG_HEADER: 'config.h',
       }
   _SECTION_NAMES = {
       _INITIAL_SECTION: "... nothing. (This can't be an error.)",
@@ -721,6 +724,7 @@ class _IncludeState(object):
       _C_SECTION: 'C system header',
       _CPP_SECTION: 'C++ system header',
       _OTHER_H_SECTION: 'other header',
+      _CONFIG_H_SECTION: 'config.h',
       }
 
   def __init__(self):
@@ -819,7 +823,13 @@ class _IncludeState(object):
 
     last_section = self._section
 
-    if header_type == _C_SYS_HEADER:
+    if header_type == _CONFIG_HEADER:
+      if self._section <= self._CONFIG_H_SECTION:
+        self._section = self._CONFIG_H_SECTION
+      else:
+        self._last_header = ''
+        return error_message
+    elif header_type == _C_SYS_HEADER:
       if self._section <= self._C_SECTION:
         self._section = self._C_SECTION
       else:
@@ -4481,6 +4491,9 @@ def _ClassifyInclude(fileinfo, include, is_system):
     else:
       return _C_SYS_HEADER
 
+  if not is_system and include == 'config.h':
+    return _CONFIG_HEADER
+
   # If the target file and the include we're checking share a
   # basename when we drop common extensions, and the include
   # lives in . , then it's likely to be owned by the target file.
@@ -4532,7 +4545,7 @@ def CheckIncludeLine(filename, clean_lines, linenum, include_state, error):
   # We also make an exception for Lua headers, which follow google
   # naming convention but not the include convention.
   match = Match(r'#include\s*"([^/]+\.h)"', line)
-  if match and not _THIRD_PARTY_HEADERS_PATTERN.match(match.group(1)):
+  if match and not _THIRD_PARTY_HEADERS_PATTERN.match(match.group(1)) and not match != 'config.h':
     error(filename, linenum, 'build/include', 4,
           'Include the directory when naming .h files')
 
@@ -4557,10 +4570,11 @@ def CheckIncludeLine(filename, clean_lines, linenum, include_state, error):
 
       # We want to ensure that headers appear in the right order:
       # 1) for foo.cc, foo.h  (preferred location)
-      # 2) c system files
-      # 3) cpp system files
-      # 4) for foo.cc, foo.h  (deprecated location)
-      # 5) other google headers
+      # 2) config.h (some header requires configured macro)
+      # 3) c system files
+      # 4) cpp system files
+      # 5) for foo.cc, foo.h  (deprecated location)
+      # 6) other google headers
       #
       # We classify each include statement as one of those 5 types
       # using a number of techniques. The include_state object keeps
@@ -4570,7 +4584,7 @@ def CheckIncludeLine(filename, clean_lines, linenum, include_state, error):
           _ClassifyInclude(fileinfo, include, is_system))
       if error_message:
         error(filename, linenum, 'build/include_order', 4,
-              '%s. Should be: %s.h, c system, c++ system, other.' %
+              '%s. Should be: %s.h, config.h, c system, c++ system, other.' %
               (error_message, fileinfo.BaseName()))
       canonical_include = include_state.CanonicalizeAlphabeticalOrder(include)
       if not include_state.IsInAlphabeticalOrder(
